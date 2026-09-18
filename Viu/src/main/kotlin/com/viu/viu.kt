@@ -8,9 +8,10 @@ import java.util.UUID
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils
-import android.R.attr.mimeType
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import java.net.URLEncoder
 import com.lagradost.cloudstream3.utils.getQualityFromName
 class Viu : MainAPI() {
     override var mainUrl = "https://www.viu.com"
@@ -42,7 +43,8 @@ class Viu : MainAPI() {
             return cachedToken!!
         }
 
-        val payload = mapOf(
+        val rand = (1..10).map { (0..9).random() }.joinToString("")
+        val androidPayload = mapOf(
             "countryCode" to countryCode,
             "platform" to "android",
             "platformFlagLabel" to "phone",
@@ -57,12 +59,27 @@ class Viu : MainAPI() {
             "appBundleId" to "com.vuclip.viu",
             "flavour" to "all"
         )
+        // Same payload the website / yt-dlp uses
+        val webPayload = mapOf(
+            "countryCode" to countryCode,
+            "platform" to "browser",
+            "platformFlagLabel" to "web",
+            "language" to "en",
+            "uuid" to UUID.randomUUID().toString(),
+            "carrierId" to "0"
+        )
 
-        val response = app.post(
-            tokenUrl,
-            headers = baseHeaders + mapOf("Content-Type" to "application/x-www-form-urlencoded"),
-            data = payload
-        ).parsedSafe<TokenResponse>()
+        var response: TokenResponse? = null
+        for (payload in listOf(webPayload, androidPayload)) {
+            val res = app.post(
+                "$tokenUrl?v=${rand}000",
+                headers = baseHeaders + mapOf("Content-Type" to "application/json"),
+                json = payload   // JSON body, NOT form-urlencoded
+            )
+            println("[VIU-DEBUG] token http=${res.code} body=${res.text.take(200)}")
+            response = res.parsedSafe<TokenResponse>()
+            if (response?.token != null || response?.data?.token != null) break
+        }
 
         val token = response?.token ?: response?.data?.token
         ?: throw Error("Failed to get Auth Token")
@@ -143,7 +160,7 @@ class Viu : MainAPI() {
         val headers = getAuthenticatedHeaders()
         val url =
             "$mobileApiUrl?platform_flag_label=web&r=/search/video" +
-                    "&keyword=$query&page=$page&limit=20" +
+                    "&keyword=${URLEncoder.encode(query, "UTF-8")}&page=$page&limit=20" +
                     "&area_id=$areaId&language_flag_id=$languageId"
 
         val resp = app.get(url, headers = headers)
@@ -192,6 +209,25 @@ class Viu : MainAPI() {
         val headers = getAuthenticatedHeaders()
         val uri = android.net.Uri.parse(url)
         val seriesId = uri.getQueryParameter("id") ?: return null
+
+        // Movies: the id is a product_id, so it must NOT go through series product-list
+        if (uri.getQueryParameter("type") == "movie") {
+            val detailUrl = "$mobileApiUrl?r=/vod/detail&product_id=$seriesId" +
+                    "&platform_flag_label=phone&language_flag_id=$languageId" +
+                    "&area_id=$areaId&os_flag_id=2&countryCode=$countryCode"
+            val movie = app.get(detailUrl, headers = headers)
+                .parsedSafe<ViuDetailResponse>()?.data?.currentProduct ?: return null
+            val ccs = movie.ccsProductId ?: return null
+            return newMovieLoadResponse(
+                movie.synopsis ?: movie.seriesName ?: "Viu Movie",
+                url,
+                TvType.Movie,
+                mapOf("ccs" to ccs, "pid" to seriesId).toJson()
+            ) {
+                posterUrl = movie.coverImage
+                plot = movie.description
+            }
+        }
         val epUrl = "$mobileApiUrl?platform_flag_label=phone&os_flag_id=2" +
                 "&r=/vod/product-list" +
                 "&series_id=$seriesId" +
@@ -247,9 +283,10 @@ class Viu : MainAPI() {
 
             val headers = mapOf(
                 "Authorization" to "Bearer ${getAuthToken()}",
-                "User-Agent" to "okhttp/4.12.0",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 12)",
                 "Accept" to "application/json",
-                "Referer" to "https://www.viu.com/"
+                "Referer" to "https://www.viu.com/",
+                "Origin" to "https://www.viu.com"
             )
             val detailUrl = "$mobileApiUrl?r=/vod/detail" +
                     "&product_id=$productId" +
@@ -310,9 +347,11 @@ class Viu : MainAPI() {
                         newExtractorLink(
                             source = name,
                             name = "Viu ${q.uppercase()}",
-                            url = url
+                            url = url,
+                            type = ExtractorLinkType.M3U8
                         ) {
                             referer = "https://www.viu.com/"
+                            headers = mapOf("Origin" to "https://www.viu.com")
                             quality = when {
                                 q.contains("1080") -> Qualities.P1080.value
                                 q.contains("720") -> Qualities.P720.value
@@ -347,6 +386,11 @@ class Viu : MainAPI() {
 
     data class ViuProductDetail(
         @JsonProperty("product_id") val productId: String?,
+        @JsonProperty("ccs_product_id") val ccsProductId: String?,
+        @JsonProperty("synopsis") val synopsis: String?,
+        @JsonProperty("series_name") val seriesName: String?,
+        @JsonProperty("description") val description: String?,
+        @JsonProperty("cover_image_url") val coverImage: String?,
         @JsonProperty("subtitle") val subtitles: List<ViuSubtitle>?
     )
 
