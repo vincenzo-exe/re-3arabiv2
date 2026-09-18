@@ -59,7 +59,6 @@ class Viu : MainAPI() {
             "appBundleId" to "com.vuclip.viu",
             "flavour" to "all"
         )
-        // Same payload the website / yt-dlp uses
         val webPayload = mapOf(
             "countryCode" to countryCode,
             "platform" to "browser",
@@ -209,8 +208,6 @@ class Viu : MainAPI() {
         val headers = getAuthenticatedHeaders()
         val uri = android.net.Uri.parse(url)
         val seriesId = uri.getQueryParameter("id") ?: return null
-
-        // Movies: the id is a product_id, so it must NOT go through series product-list
         if (uri.getQueryParameter("type") == "movie") {
             val detailUrl = "$mobileApiUrl?r=/vod/detail&product_id=$seriesId" +
                     "&platform_flag_label=phone&language_flag_id=$languageId" +
