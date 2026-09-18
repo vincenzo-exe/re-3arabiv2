@@ -348,7 +348,7 @@ class Viu : MainAPI() {
                             type = ExtractorLinkType.M3U8
                         ) {
                             referer = "https://www.viu.com/"
-                            headers = mapOf("Origin" to "https://www.viu.com")
+                            this.headers = mapOf("Origin" to "https://www.viu.com")
                             quality = when {
                                 q.contains("1080") -> Qualities.P1080.value
                                 q.contains("720") -> Qualities.P720.value
